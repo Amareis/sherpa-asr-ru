@@ -341,6 +341,10 @@ function clearLoadedFiles() {
 }
 
 // Функция загрузки файла с прогрессом
+// ПРИМЕЧАНИЕ: На GitHub Pages файлы передаются с gzip сжатием, поэтому
+// Content-Length показывает сжатый размер, а мы читаем распакованные данные.
+// Из-за этого процент может показывать >100% (например 108.7%).
+// Это нормально - просто размер распакованных данных больше сжатых.
 async function fetchWithProgress(url, filename, onProgress) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -423,10 +427,11 @@ async function loadModelFiles(modelKey) {
           modelConfig.path + file,
           file,
           (loaded, total) => {
-            const percent = ((loaded / total) * 100).toFixed(1);
             const loadedMB = (loaded / 1024 / 1024).toFixed(1);
-            const totalMB = (total / 1024 / 1024).toFixed(1);
-            Module.setStatus(`Downloading ${file}... ${percent}% (${loadedMB}/${totalMB} MB)`);
+            // Примечание: процент может быть >100% из-за gzip сжатия на сервере
+            // Content-Length = сжатый размер, loaded = распакованный размер
+            const percent = Math.min(((loaded / total) * 100), 100).toFixed(0);
+            Module.setStatus(`Downloading ${file}... ${percent}% (${loadedMB} MB)`);
           }
         );
         
