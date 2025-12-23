@@ -67,32 +67,24 @@
 
   <!-- Footer Section -->
   <div style="width: 100%; max-width: 900px; margin-top: 1.5rem; background: #fff; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); text-align: left; font-size: 0.9rem; color: #6c757d;">
-    <h3>Description</h3>
-    <ul>
-      <li>Everything is <strong>open-sourced.</strong> <a href="https://github.com/k2-fsa/sherpa-onnx">code</a></li>
-      <li>If you have any issues, please either <a href="https://github.com/k2-fsa/sherpa-onnx/issues">file a ticket</a> or contact us via</li>
-        <ul>
-          <li><a href="https://k2-fsa.github.io/sherpa/social-groups.html#wechat">WeChat group</a></li>
-          <li><a href="https://k2-fsa.github.io/sherpa/social-groups.html#qq">QQ group</a></li>
-          <li><a href="https://k2-fsa.github.io/sherpa/social-groups.html#bilibili-b">Bilibili</a></li>
-        </ul>
-    </ul>
     <h3>About This Demo</h3>
     <ul>
-      <li><strong>Language:</strong> Russian language model (Zipformer transducer)</li>
-      <li><strong>Private and Secure:</strong> All processing is done locally on your device (CPU) within your browser with a single thread. No server is involved, ensuring privacy and security. You can disconnect from the Internet once this page is loaded.</li>
-      <li><strong>Efficient Resource Usage:</strong> No GPU is required, leaving system resources available for webLLM analysis.</li>
-    </ul>
-    <h3>Latest Update</h3>
-    <ul>
-      <li>Added Russian language model from ru-asr folder.</li>
-      <li>Models loaded dynamically via Module.MountedFiles.</li>
-      <li>Update UI.</li>
+      <li><strong>Source Code:</strong> <a href="https://github.com/Amareis/sherpa-asr-ru">GitHub Repository</a></li>
+      <li><strong>Language:</strong> Russian speech recognition with two models:
+        <ul>
+          <li><strong>Vosk Zipformer (int8)</strong> - 27MB, 16kHz, fast and accurate</li>
+          <li><strong>T-One CTC</strong> - 128MB, 8kHz, character-level model</li>
+        </ul>
+      </li>
+      <li><strong>Private and Secure:</strong> All processing is done locally on your device (CPU) within your browser. No server is involved, ensuring privacy and security. You can disconnect from the Internet once the model is loaded.</li>
+      <li><strong>Caching:</strong> Models are cached in IndexedDB after first download for fast subsequent loads.</li>
     </ul>
 
     <h3>Acknowledgement</h3>
     <ul>
-      <li>We refer to <a href="https://huggingface.co/spaces/Banafo/Kroko-Streaming-ASR-Wasm">https://huggingface.co/spaces/Banafo/Kroko-Streaming-ASR-Wasm</a> for the UI part.</li>
+      <li><a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a> - ONNX runtime for speech recognition</li>
+      <li><a href="https://alphacephei.com/vosk/">Vosk</a> - speech recognition model</li>
+      <li><a href="https://huggingface.co/t-one">T-One</a> - CTC model</li>
     </ul>
   </div>
 

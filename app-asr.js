@@ -633,7 +633,12 @@ Module.onRuntimeInitialized = async function() {
 let audioCtx;
 let mediaStream;
 
-let expectedSampleRate = 16000;
+// Устанавливаем expectedSampleRate из сохранённой модели ДО создания AudioContext
+// Это важно чтобы браузер создал AudioContext с правильной частотой
+const savedModelForSampleRate = localStorage.getItem(MODEL_STORAGE_KEY) || 'vosk';
+const savedModelConfig = MODEL_CONFIGS[savedModelForSampleRate];
+let expectedSampleRate = savedModelConfig ? savedModelConfig.sampleRate : 16000;
+console.log(`[INIT] Initial expectedSampleRate from saved model (${savedModelForSampleRate}): ${expectedSampleRate}Hz`);
 let recordSampleRate;  // the sampleRate of the microphone
 let recorder = null;   // the microphone
 let leftchannel = [];  // TODO: Use a single channel
@@ -654,8 +659,24 @@ if (navigator.mediaDevices.getUserMedia) {
   const constraints = {audio: true};
 
   let onSuccess = function(stream) {
-    if (!audioCtx) {
-      audioCtx = new AudioContext({sampleRate: 16000});
+    // Создаём AudioContext с частотой дискретизации нужной для текущей модели
+    // Это позволяет браузеру делать качественный ресэмплинг вместо нашего
+    const targetSampleRate = expectedSampleRate;
+    
+    if (!audioCtx || audioCtx.sampleRate !== targetSampleRate) {
+      if (audioCtx) {
+        console.log(`[AUDIO] Closing old AudioContext (was ${audioCtx.sampleRate}Hz)`);
+        audioCtx.close();
+      }
+      // Пробуем создать с нужной частотой, но браузер может не поддержать
+      try {
+        audioCtx = new AudioContext({sampleRate: targetSampleRate});
+        console.log(`[AUDIO] Created AudioContext with target sampleRate: ${targetSampleRate}Hz`);
+      } catch (e) {
+        // Fallback на дефолтную частоту
+        audioCtx = new AudioContext();
+        console.log(`[AUDIO] Created AudioContext with default sampleRate: ${audioCtx.sampleRate}Hz`);
+      }
     }
     console.log(audioCtx);
     recordSampleRate = audioCtx.sampleRate;
@@ -942,27 +963,71 @@ function toWav(samples) {
   return new Blob([view], {type: 'audio/wav'});
 }
 
-// this function is copied from
-// https://github.com/awslabs/aws-lex-browser-audio-capture/blob/master/lib/worker.js#L46
+// Улучшенный даунсэмплинг с low-pass фильтром для предотвращения aliasing
+// Особенно важно при сильном понижении частоты (16kHz -> 8kHz)
+// ПРИМЕЧАНИЕ: Если AudioContext создан с правильной частотой, эта функция
+// просто вернёт буфер без изменений (браузер уже сделал ресэмплинг)
 function downsampleBuffer(buffer, exportSampleRate) {
   if (exportSampleRate === recordSampleRate) {
+    // Браузер уже сделал ресэмплинг - отлично!
     return buffer;
   }
-  var sampleRateRatio = recordSampleRate / exportSampleRate;
-  var newLength = Math.round(buffer.length / sampleRateRatio);
-  var result = new Float32Array(newLength);
-  var offsetResult = 0;
-  var offsetBuffer = 0;
-  while (offsetResult < result.length) {
-    var nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
-    var accum = 0, count = 0;
-    for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
-      accum += buffer[i];
-      count++;
-    }
-    result[offsetResult] = accum / count;
-    offsetResult++;
-    offsetBuffer = nextOffsetBuffer;
+  
+  // Fallback: браузер не смог создать AudioContext с нужной частотой
+  // Делаем программный ресэмплинг
+  console.log(`[RESAMPLE] Downsampling from ${recordSampleRate}Hz to ${exportSampleRate}Hz (ratio: ${(recordSampleRate/exportSampleRate).toFixed(2)})`);
+  
+  const sampleRateRatio = recordSampleRate / exportSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  
+  // Для сильного даунсэмплинга (ratio >= 2) применяем low-pass фильтр
+  let filteredBuffer = buffer;
+  if (sampleRateRatio >= 2) {
+    filteredBuffer = applyLowPassFilter(buffer, exportSampleRate / 2, recordSampleRate);
   }
+  
+  // Линейная интерполяция (лучше чем простое усреднение)
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = i * sampleRateRatio;
+    const srcIndexFloor = Math.floor(srcIndex);
+    const srcIndexCeil = Math.min(srcIndexFloor + 1, filteredBuffer.length - 1);
+    const fraction = srcIndex - srcIndexFloor;
+    
+    // Линейная интерполяция между соседними сэмплами
+    result[i] = filteredBuffer[srcIndexFloor] * (1 - fraction) + filteredBuffer[srcIndexCeil] * fraction;
+  }
+  
   return result;
-};
+}
+
+// Простой low-pass фильтр (moving average с окном)
+// cutoffFreq - частота среза, sampleRate - частота дискретизации
+function applyLowPassFilter(buffer, cutoffFreq, sampleRate) {
+  // Размер окна фильтра зависит от соотношения частот
+  // Чем ниже cutoff относительно sampleRate, тем больше окно
+  const windowSize = Math.max(3, Math.round(sampleRate / cutoffFreq / 2));
+  const halfWindow = Math.floor(windowSize / 2);
+  
+  const result = new Float32Array(buffer.length);
+  
+  for (let i = 0; i < buffer.length; i++) {
+    let sum = 0;
+    let count = 0;
+    
+    // Применяем треугольное окно (лучше чем прямоугольное)
+    for (let j = -halfWindow; j <= halfWindow; j++) {
+      const idx = i + j;
+      if (idx >= 0 && idx < buffer.length) {
+        // Треугольный вес: максимум в центре, убывает к краям
+        const weight = 1 - Math.abs(j) / (halfWindow + 1);
+        sum += buffer[idx] * weight;
+        count += weight;
+      }
+    }
+    
+    result[i] = sum / count;
+  }
+  
+  return result;
+}
