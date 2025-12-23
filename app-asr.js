@@ -7,9 +7,210 @@ const stopBtn = document.getElementById('stopBtn');
 const clearBtn = document.getElementById('clearBtn');
 const soundClips = document.getElementById('sound-clips');
 const loadModelBtn = document.getElementById('loadModelBtn');
+const clearCacheBtn = document.getElementById('clearCacheBtn');
+const cacheInfoSpan = document.getElementById('cacheInfo');
 
 // Ключ для localStorage
 const MODEL_STORAGE_KEY = 'sherpa-asr-selected-model';
+
+// ============================================
+// IndexedDB кэширование моделей
+// ============================================
+const DB_NAME = 'sherpa-asr-cache';
+const DB_VERSION = 1;
+const STORE_NAME = 'models';
+
+let dbInstance = null;
+
+// Открытие/создание базы данных
+function openDB() {
+  return new Promise((resolve, reject) => {
+    if (dbInstance) {
+      resolve(dbInstance);
+      return;
+    }
+    
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    
+    request.onerror = () => {
+      console.error('[CACHE] Failed to open IndexedDB:', request.error);
+      reject(request.error);
+    };
+    
+    request.onsuccess = () => {
+      dbInstance = request.result;
+      console.log('[CACHE] IndexedDB opened successfully');
+      resolve(dbInstance);
+    };
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+        console.log('[CACHE] Created object store:', STORE_NAME);
+      }
+    };
+  });
+}
+
+// Получение файла из кэша
+async function getFromCache(key) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(key);
+      
+      request.onsuccess = () => {
+        if (request.result) {
+          console.log(`[CACHE] ✓ Found in cache: ${key}`);
+          resolve(request.result.data);
+        } else {
+          resolve(null);
+        }
+      };
+      
+      request.onerror = () => {
+        console.error(`[CACHE] Error reading ${key}:`, request.error);
+        reject(request.error);
+      };
+    });
+  } catch (e) {
+    console.error('[CACHE] getFromCache error:', e);
+    return null;
+  }
+}
+
+// Сохранение файла в кэш
+async function saveToCache(key, data) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put({ key, data, timestamp: Date.now() });
+      
+      request.onsuccess = () => {
+        console.log(`[CACHE] ✓ Saved to cache: ${key} (${(data.byteLength / 1024 / 1024).toFixed(2)} MB)`);
+        resolve();
+      };
+      
+      request.onerror = () => {
+        console.error(`[CACHE] Error saving ${key}:`, request.error);
+        reject(request.error);
+      };
+    });
+  } catch (e) {
+    console.error('[CACHE] saveToCache error:', e);
+  }
+}
+
+// Очистка кэша
+async function clearCache() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.clear();
+      
+      request.onsuccess = () => {
+        console.log('[CACHE] ✓ Cache cleared');
+        resolve();
+      };
+      
+      request.onerror = () => {
+        console.error('[CACHE] Error clearing cache:', request.error);
+        reject(request.error);
+      };
+    });
+  } catch (e) {
+    console.error('[CACHE] clearCache error:', e);
+  }
+}
+
+// Получение информации о кэше
+async function getCacheInfo() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      
+      request.onsuccess = () => {
+        const items = request.result;
+        let totalSize = 0;
+        const files = [];
+        
+        for (const item of items) {
+          const size = item.data.byteLength;
+          totalSize += size;
+          files.push({
+            key: item.key,
+            size: size,
+            timestamp: item.timestamp
+          });
+        }
+        
+        resolve({
+          count: items.length,
+          totalSize: totalSize,
+          files: files
+        });
+      };
+      
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    return { count: 0, totalSize: 0, files: [] };
+  }
+}
+
+// Обновление информации о кэше в UI
+async function updateCacheInfoUI() {
+  if (!cacheInfoSpan) return;
+  
+  try {
+    const info = await getCacheInfo();
+    if (info.count === 0) {
+      cacheInfoSpan.textContent = 'empty';
+    } else {
+      const sizeMB = (info.totalSize / 1024 / 1024).toFixed(1);
+      cacheInfoSpan.textContent = `${info.count} files, ${sizeMB} MB`;
+    }
+  } catch (e) {
+    cacheInfoSpan.textContent = 'unavailable';
+  }
+}
+
+// Обработчик кнопки очистки кэша
+if (clearCacheBtn) {
+  clearCacheBtn.onclick = async function() {
+    if (!confirm('Clear all cached model files? Next load will download from network.')) {
+      return;
+    }
+    
+    clearCacheBtn.disabled = true;
+    clearCacheBtn.textContent = 'Clearing...';
+    
+    try {
+      await clearCache();
+      await updateCacheInfoUI();
+      console.log('[CACHE] Cache cleared by user');
+    } catch (e) {
+      console.error('[CACHE] Failed to clear cache:', e);
+    }
+    
+    clearCacheBtn.disabled = false;
+    clearCacheBtn.textContent = 'Clear Cache';
+  };
+}
+
+// Обновляем информацию о кэше при загрузке страницы
+updateCacheInfoUI();
+// ============================================
 
 // Функция для получения выбранной модели из radio buttons
 function getSelectedModel() {
@@ -139,7 +340,50 @@ function clearLoadedFiles() {
   console.log('[CLEAR] === Cleanup complete ===');
 }
 
-// Функция для загрузки файлов выбранной модели
+// Функция загрузки файла с прогрессом
+async function fetchWithProgress(url, filename, onProgress) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load ${filename}: ${response.statusText}`);
+  }
+  
+  const contentLength = response.headers.get('Content-Length');
+  if (!contentLength || !response.body) {
+    // Fallback если нет Content-Length или ReadableStream
+    const arrayBuffer = await response.arrayBuffer();
+    return new Uint8Array(arrayBuffer);
+  }
+  
+  const total = parseInt(contentLength, 10);
+  let loaded = 0;
+  
+  const reader = response.body.getReader();
+  const chunks = [];
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    chunks.push(value);
+    loaded += value.length;
+    
+    if (onProgress) {
+      onProgress(loaded, total);
+    }
+  }
+  
+  // Собираем все chunks в один Uint8Array
+  const result = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  
+  return result;
+}
+
+// Функция для загрузки файлов выбранной модели (с кэшированием в IndexedDB)
 async function loadModelFiles(modelKey) {
   const modelConfig = MODEL_CONFIGS[modelKey];
   if (!modelConfig) {
@@ -147,26 +391,58 @@ async function loadModelFiles(modelKey) {
   }
 
   console.log(`=== Loading model: ${modelConfig.name} ===`);
-  Module.setStatus(`Loading ${modelConfig.name}...`);
-
+  
   // Очищаем предыдущие файлы
   clearLoadedFiles();
 
+  // Проверяем кэш
+  const cacheInfo = await getCacheInfo();
+  console.log(`[CACHE] Current cache: ${cacheInfo.count} files, ${(cacheInfo.totalSize / 1024 / 1024).toFixed(2)} MB`);
+
+  let loadedFromCache = 0;
+  let loadedFromNetwork = 0;
+  let totalSize = 0;
+
   for (const file of modelConfig.files) {
+    const cacheKey = `${modelKey}/${file}`;
+    
     try {
-      console.log(`[LOAD] Fetching ${modelConfig.path}${file}...`);
-      const response = await fetch(modelConfig.path + file);
-
-      if (!response.ok) {
-        throw new Error(`Failed to load ${file}: ${response.statusText}`);
+      // Пробуем загрузить из кэша
+      let uint8Array = await getFromCache(cacheKey);
+      
+      if (uint8Array) {
+        // Файл найден в кэше
+        loadedFromCache++;
+        totalSize += uint8Array.byteLength;
+        Module.setStatus(`Loading ${modelConfig.name}... (${file} from cache)`);
+      } else {
+        // Файл не в кэше - загружаем из сети с прогрессом
+        console.log(`[LOAD] Fetching ${modelConfig.path}${file} from network...`);
+        
+        uint8Array = await fetchWithProgress(
+          modelConfig.path + file,
+          file,
+          (loaded, total) => {
+            const percent = ((loaded / total) * 100).toFixed(1);
+            const loadedMB = (loaded / 1024 / 1024).toFixed(1);
+            const totalMB = (total / 1024 / 1024).toFixed(1);
+            Module.setStatus(`Downloading ${file}... ${percent}% (${loadedMB}/${totalMB} MB)`);
+          }
+        );
+        
+        loadedFromNetwork++;
+        totalSize += uint8Array.byteLength;
+        
+        console.log(`[LOAD] ✓ Downloaded ${file} (${(uint8Array.byteLength / 1024 / 1024).toFixed(2)} MB)`);
+        
+        // Сохраняем в кэш (асинхронно, не ждём)
+        saveToCache(cacheKey, uint8Array).catch(e => {
+          console.warn(`[CACHE] Failed to cache ${file}:`, e);
+        });
       }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const uint8Array = new Uint8Array(arrayBuffer);
 
       // Сохраняем в MountedFiles
       Module.MountedFiles.set(file, uint8Array);
-      console.log(`[LOAD] ✓ Loaded ${file} (${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)} MB)`);
 
       // Создаем файл в виртуальной FS Emscripten
       try {
@@ -184,12 +460,16 @@ async function loadModelFiles(modelKey) {
 
   currentModelType = modelKey;
   console.log(`=== Model ${modelConfig.name} loaded successfully ===`);
+  console.log(`[LOAD] Summary: ${loadedFromCache} from cache, ${loadedFromNetwork} from network, total ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
   
   // Проверяем что все файлы загружены
   console.log('[LOAD] Verifying loaded files:');
   for (const [filename, data] of Module.MountedFiles) {
     console.log(`[LOAD]   - ${filename}: ${(data.byteLength / 1024).toFixed(1)} KB`);
   }
+  
+  // Обновляем информацию о кэше в UI
+  updateCacheInfoUI();
 }
 
 // https://emscripten.org/docs/api_reference/module.html#Module.locateFile
